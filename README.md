@@ -1,4 +1,4 @@
-# 轴管理插件 for HoshinoBot
+# Box统计插件 for HoshinoBot
 
 A [HoshinoBot](https://github.com/Ice-Cirno/HoshinoBot) based [PCR](http://priconne-redive.jp/) plugin which can make the bot collect clan member's box automatically.  .
 
