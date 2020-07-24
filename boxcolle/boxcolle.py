@@ -125,8 +125,8 @@ async def box_input(session):
         for key in box.keys():
             db._update_or_insert(session.event.user_id, r[0], chara_name2chara_id(str(key)), str(key), box[key])
         await session.send(f'box录入完毕!')
-        user_nickname = await get_user_nickname(session.bot, r[3], session.event.user_id)
-        await session.bot.send_group_msg(group_id=r[3], message=f'{user_nickname}完成了box录入')
+        user_card = await get_user_card(session.bot, r[3], session.event.user_id)
+        await session.bot.send_group_msg(group_id=r[3], message=f'{user_card}完成了box录入')
 
 
 def normalize_str(s):
@@ -150,24 +150,24 @@ def is_valid_input(s):
     return '', True
 
 
-async def get_user_nickname_dict(bot, group_id):
+async def get_user_card_dict(bot, group_id):
     mlist = await bot.get_group_member_list(group_id=group_id)
     d = {}
     for m in mlist:
-        d[m['user_id']] = m['nickname']
+        d[m['user_id']] = m['card']
     return d
 
 
-async def get_user_nickname(bot, group_id, user_id):
+async def get_user_card(bot, group_id, user_id):
     mlist = await bot.get_group_member_list(group_id=group_id)
     for m in mlist:
         if m['user_id'] == user_id:
-            return m['nickname']
+            return m['card']
     return str(user_id)
 
 
-def uid2nickname(uid, user_nickname_dict):
-    return str(uid) if uid not in user_nickname_dict.keys() else user_nickname_dict[uid]
+def uid2card(uid, user_card_dict):
+    return str(uid) if uid not in user_card_dict.keys() else user_card_dict[uid]
 
 
 def is_uid_in_blacklist(uid, blacklist, blacklist_on):
@@ -242,11 +242,11 @@ async def confirm_broadcast(bot, ev: CQEvent):
         r = db1._find_by_id(ev.group_id)
         db_name, broadcast_list_str, detail, collection_setting = r[0], r[1], r[2], r[3]
         broadcast_list = broadcast_list_str.split(',')
-        user_nickname = await get_user_nickname(bot, ev.group_id, ev.user_id)
+        user_card = await get_user_card(bot, ev.group_id, ev.user_id)
         db2 = ColleRequestDao()
         for uid in broadcast_list:
             db2._update_or_insert_by_id(int(uid), ev.group_id, db_name, detail, collection_setting)
-            await bot.send_private_msg(user_id=int(uid), message=f'您好~群{ev.group_id}的管理员{user_nickname}({ev.user_id})正在统计公会成员的box，请输入"录入box"并根据指示向机器人录入您的box~')
+            await bot.send_private_msg(user_id=int(uid), message=f'您好~群{ev.group_id}的管理员{user_card}({ev.user_id})正在统计公会成员的box，请输入"录入box"并根据指示向机器人录入您的box~')
         command_confirmer.reset()
         await bot.send(ev, f'广播成功!已向{len(broadcast_list)}人私聊发送box统计请求')
     elif command_confirmer.has_command_wait_to_confirm():
@@ -268,10 +268,10 @@ async def box_collect(bot, ev: CQEvent):
             return
         db_name, broadcast_list_str, detail, collection_setting = r[0], r[1], r[2], r[3]
         broadcast_list = broadcast_list_str.split(',')
-        user_nickname = await get_user_nickname(bot, ev.group_id, int(broadcast_list[0]))
+        user_card = await get_user_card(bot, ev.group_id, int(broadcast_list[0]))
         msg_part = '' if len(broadcast_list)==1 else f'等{len(broadcast_list)}人'
         msg = f'''
-准备向{user_nickname}{msg_part}私聊统计box，当前参数如下:\n
+准备向{user_card}{msg_part}私聊统计box，当前参数如下:\n
 存放统计结果的数据库: {db_name}\n
 此次统计的相关说明: {detail}\n
 需要统计的人物名: {collection_setting}\n\n
@@ -303,8 +303,8 @@ async def delete_data_from_db(bot, ev:CQEvent):
         user_id = s_complemented[1][1:]
         db = BoxColleDao()
         db._delete_by_user_id(user_id, db_name)
-        user_nickname = await get_user_nickname(bot, ev.group_id, user_id)
-        await bot.send(ev, f'已将{user_nickname}录入的数据从{db_name}数据库中删除')
+        user_card = await get_user_card(bot, ev.group_id, user_id)
+        await bot.send(ev, f'已将{user_card}录入的数据从{db_name}数据库中删除')
     elif len(s_complemented)==2 and is_valid_name(s_complemented[1]):
         db_name = s_complemented[0]
         chara_id = chara_name2chara_id(s_complemented[1])
@@ -358,18 +358,18 @@ async def get_collection_result(bot, ev: CQEvent):
         if len(s_complemented) == 1:
             db = BoxColleDao()
             uid_list = db._get_recorded_uid_list(s_complemented[0])
-            user_nickname_dict = await get_user_nickname_dict(bot, ev.group_id)
-            msg = f'{s_complemented[0]}数据库共{len(uid_list)}人录入了box，他们是:\n' + '\n'.join([uid2nickname(uid, user_nickname_dict) for uid in uid_list])
+            user_card_dict = await get_user_card_dict(bot, ev.group_id)
+            msg = f'{s_complemented[0]}数据库共{len(uid_list)}人录入了box，他们是:\n' + '\n'.join([uid2card(uid, user_card_dict) for uid in uid_list])
             await bot.send(ev, msg)
         elif len(s_complemented) == 2:
             if s_complemented[1].startswith('@'):
                 uid = int(s_complemented[1][1:])
-                user_nickname = await get_user_nickname(bot, ev.group_id, uid)
+                user_card = await get_user_card(bot, ev.group_id, uid)
                 db = BoxColleDao()
                 charname_list = db._get_recorded_charaname_list(s_complemented[0])
                 star_list = [db._find_by_primary_key(uid, s_complemented[0], chara_name2chara_id(i)) for i in charname_list]
                 box_str = ','.join([f' {charname_list[i]}{star_list[i]}x'for i in range(len(charname_list)) if star_list[i]!='']).lstrip()
-                msg = f'{s_complemented[0]}数据库中{user_nickname}录入的box是:\n' + box_str
+                msg = f'{s_complemented[0]}数据库中{user_card}录入的box是:\n' + box_str
                 await bot.send(ev, msg)
             elif is_valid_name(s_complemented[1]):
                 chara_id = chara_name2chara_id(s_complemented[1])
@@ -377,11 +377,11 @@ async def get_collection_result(bot, ev: CQEvent):
                 uid_dict = db._find_by_chara_id(chara_id, s_complemented[0])
                 star_list = sorted(set(uid_dict.values()), reverse = True)
                 msg_part = ''
-                user_nickname_dict = await get_user_nickname_dict(bot, ev.group_id)
+                user_card_dict = await get_user_card_dict(bot, ev.group_id)
                 for star in star_list:
-                    nickname_list = [uid2nickname(uid, user_nickname_dict) for uid in uid_dict.keys() if uid_dict[uid]==star]
-                    msg_part += f'{star}x: (共{len(nickname_list)}人)\n'
-                    msg_part += ', '.join(nickname_list) + '\n'
+                    card_list = [uid2card(uid, user_card_dict) for uid in uid_dict.keys() if uid_dict[uid]==star]
+                    msg_part += f'{star}x: (共{len(card_list)}人)\n'
+                    msg_part += ', '.join(card_list) + '\n'
                 msg = f'{s_complemented[0]}数据库中录入的{s_complemented[1]}的星级情况为:\n' + msg_part.strip()
                 await bot.send(ev, msg)    
         elif len(s_complemented) == 3:
@@ -389,8 +389,8 @@ async def get_collection_result(bot, ev: CQEvent):
             chara_id = chara_name2chara_id(s_complemented[2])
             db = BoxColleDao()
             star = db._find_by_primary_key(uid, s_complemented[0], chara_id)
-            user_nickname = await get_user_nickname(bot, ev.group_id, uid)
-            msg = f'{s_complemented[0]}数据库中{user_nickname}{s_complemented[2]}的星级为: {star}x'
+            user_card = await get_user_card(bot, ev.group_id, uid)
+            msg = f'{s_complemented[0]}数据库中{user_card}{s_complemented[2]}的星级为: {star}x'
             await bot.send(ev, msg)    
     except:
         await bot.send(ev, '参数格式错误，请重试')
@@ -419,9 +419,9 @@ async def write_box_colle_to_csv(bot, ev: CQEvent):
             writer.writerow(row0)
     
             uid_list = db._get_recorded_uid_list(db_name)
-            user_nickname_dict = await get_user_nickname_dict(bot, ev.group_id)
+            user_card_dict = await get_user_card_dict(bot, ev.group_id)
             for uid in uid_list:
-                row = [uid2nickname(uid, user_nickname_dict)]
+                row = [uid2card(uid, user_card_dict)]
                 for chara_name in charaname_list:
                     star = db._find_by_primary_key(uid, db_name, chara_name2chara_id(chara_name))
                     if star == '':
@@ -463,7 +463,7 @@ async def send_box_colle_pic(bot, ev: CQEvent):
         db = BoxColleDao()
         charaname_list = db._get_recorded_charaname_list(db_name)
         uid_list = db._get_recorded_uid_list(db_name)
-        user_nickname_dict = await get_user_nickname_dict(bot, ev.group_id)
+        user_card_dict = await get_user_card_dict(bot, ev.group_id)
     
         im = Image.open(os.path.normcase('hoshino/modules/boxcolle/pic/table_base.png'))
         draw = ImageDraw.Draw(im)
@@ -478,9 +478,9 @@ async def send_box_colle_pic(bot, ev: CQEvent):
             width, height = draw.textsize(charaname_list[i], font = fnt)
             draw.text((153+i*46-width/2,30), charaname_list[i], fill=(0, 0 ,0), font=fnt)
         for i in range(len(uid_list)):
-            nickname = uid2nickname(uid_list[i], user_nickname_dict)
-            nickname_trunc = nickname[0:get_max_char_amount(nickname, draw, fnt, 80)]
-            draw.text((43, 54+i*23), nickname_trunc, fill=(0, 0 ,0), font=fnt)
+            card = uid2card(uid_list[i], user_card_dict)
+            card_trunc = card[0:get_max_char_amount(card, draw, fnt, 80)]
+            draw.text((43, 54+i*23), card_trunc, fill=(0, 0 ,0), font=fnt)
         for i in range(len(uid_list)):
             for j in range(len(charaname_list)):
                 star = db._find_by_primary_key(uid_list[i], db_name, chara_name2chara_id(charaname_list[j]))
