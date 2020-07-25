@@ -54,6 +54,14 @@ class BoxColleDao:
             raise Exception('删除box统计表发生错误')
 
 
+    def _find_chara_id_by_user_id(self, user_id, db_name):
+        try:
+            r = self._connect().execute("SELECT CHARAID FROM BOXCOLLETABLE WHERE UID=? AND DBNAME=?",(user_id, db_name)).fetchall()
+            return [] if r==None else [i[0] for i in r]
+        except:
+            raise Exception('查找box统计表发生错误')
+            
+
     def _find_by_user_id(self, user_id, db_name):
         try:
             r = self._connect().execute("SELECT CHARANAME,STAR FROM BOXCOLLETABLE WHERE UID=? AND DBNAME=?",(user_id, db_name)).fetchall()        

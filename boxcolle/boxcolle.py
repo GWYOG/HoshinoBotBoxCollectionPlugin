@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 from time import sleep
 
 sv = Service('boxcolle', bundle='pcrbox统计', help_='''
-一键box统计 | 在配置完box统计参数后使用此指令，机器人会自动私聊公会成员统计其box
+一键box统计 [补录] | 在配置完box统计参数后使用此指令，机器人会自动私聊公会成员统计其box。如果填写参数"补录"，则会开启补录模式，只让成员填写他们还没录入的角色星级。
 ----------
 设置box统计 <数据库名> <统计对象> <备注> <统计的角色名(逗号分隔)> | 统计对象参数目前支持填写"all"(全部成员) 或"allE@xxx@yyy"(全部成员除去xxx和yyy) 或"@xxx@yyy"(xxx和yyy)
 ----------
@@ -48,7 +48,8 @@ class CommandConfirmer:
         delta_time = now_time - self.last_command_time
         return delta_time.seconds <= self.max_valid_time
     
-    def record_command_time(self):
+    def record_command(self, command_name):
+        self.last_command_name = command_name
         self.last_command_time = datetime.datetime.now()
         
     def has_command_wait_to_confirm(self):
@@ -60,6 +61,7 @@ class CommandConfirmer:
 
 MAX_VALID_TIME = 30
 SEND_INTERVAL = 0.5
+COMMAND_NAMES = ['boxcolle', 'boxcolle_replenish']
 command_confirmer = CommandConfirmer(MAX_VALID_TIME)
 broadcast_list= []
 broadcast_msg = ''
@@ -103,11 +105,14 @@ async def box_input(session):
     if s=='':
         msg = f'''
 请按格式输入以下角色的星级(可单次或分多次输入):\n
-{r[2]}\n
+{r[2]}
+-----------------------------------
 备注:\n
-{r[1]}\n
+{r[1]}
+-----------------------------------
 输入格式:\n
-在需要输入的人物名后面直接填写星级数。\n比如想录入"狼,狗"的星级，\n则输入"录入box 狼4,狗5"\n如果没有这个人物，则填0\n
+在需要输入的人物名后面直接填写星级数。\n比如想录入"狼,狗"的星级，\n则输入"录入box 狼4,狗5"\n如果没有这个角色，则填0
+-----------------------------------
 下方文本供复制修改使用:
 '''.strip()
         await session.send(msg)
@@ -244,19 +249,49 @@ async def confirm_broadcast(bot, ev: CQEvent):
         r = db1._find_by_id(ev.group_id)
         db_name, broadcast_list_str, detail, collection_setting = r[0], r[1], r[2], r[3]
         broadcast_list = broadcast_list_str.split(',')
-        user_card = await get_user_card(bot, ev.group_id, ev.user_id)
-        db2 = ColleRequestDao()
-        command_confirmer.reset()
-        await bot.send(ev, f'即将开始广播，此过程大概需要{int(len(broadcast_list)*SEND_INTERVAL)+1}s完成，请耐心等待')
-        for uid in broadcast_list:
-            db2._update_or_insert_by_id(int(uid), ev.group_id, db_name, detail, collection_setting)
-            await bot.send_private_msg(user_id=int(uid), message=f'您好~群{ev.group_id}的管理员{user_card}({ev.user_id})正在统计公会成员的box，请输入"录入box"并根据指示向机器人录入您的box~')
-            sleep(SEND_INTERVAL)
-        await bot.send(ev, f'广播成功!已向{len(broadcast_list)}人私聊发送box统计请求')
+        if command_confirmer.last_command_name == COMMAND_NAMES[0]:
+            user_card = await get_user_card(bot, ev.group_id, ev.user_id)
+            db2 = ColleRequestDao()
+            command_confirmer.reset()
+            await bot.send(ev, f'即将开始广播，此过程大约需要{int(len(broadcast_list)*SEND_INTERVAL)+1}s完成，请耐心等待')
+            for uid in broadcast_list:
+                db2._update_or_insert_by_id(int(uid), ev.group_id, db_name, detail, collection_setting)
+                await bot.send_private_msg(user_id=int(uid), message=f'您好~群{ev.group_id}的管理员{user_card}({ev.user_id})正在统计公会成员的box，请输入"录入box"并根据指示向机器人录入您的box~')
+                sleep(SEND_INTERVAL)
+            await bot.send(ev, f'广播成功!已向{len(broadcast_list)}人私聊发送box统计请求')
+        elif command_confirmer.last_command_name == COMMAND_NAMES[1]:
+            collection_replenish_dict =  get_collection_replenish_dict(broadcast_list, db_name, collection_setting)
+            user_card = await get_user_card(bot, ev.group_id, ev.user_id)
+            db2 = ColleRequestDao()
+            command_confirmer.reset()
+            await bot.send(ev, f'即将开始广播，此过程大约需要{int(len(collection_replenish_dict.keys())*SEND_INTERVAL)+1}s完成，请耐心等待')
+            for uid in collection_replenish_dict.keys():
+                db2._update_or_insert_by_id(uid, ev.group_id, db_name, detail, collection_replenish_dict[uid])
+                msg = f'''
+您好~群{ev.group_id}的管理员{user_card}({ev.user_id})正在补录上次统计中漏统计的角色星级，您还需要补充录入的的角色为:\n
+{collection_replenish_dict[uid]}\n
+请输入"录入box"查看填写格式的相关说明
+'''.strip()
+                await bot.send_private_msg(user_id=uid, message=msg)
+                sleep(SEND_INTERVAL)
+            await bot.send(ev, f'广播成功!已向{len(collection_replenish_dict.keys())}人私聊发送box补录请求')            
     elif command_confirmer.has_command_wait_to_confirm():
         await bot.send(ev, f'确认超时，请在{MAX_VALID_TIME}s内完成确认')
     else:
         await bot.send(ev, '未找到需要确认的指令')
+
+
+def get_collection_replenish_dict(broadcast_list, db_name, collection_setting):
+    collection_replenish_dict = {}
+    for uid_str in broadcast_list:
+        db2 = BoxColleDao()
+        recorded_charaid_list = db2._find_chara_id_by_user_id(int(uid_str), db_name)
+        request_charaname_list = collection_setting.split(', ')
+        request_charaid_list = [chara_name2chara_id(name) for name in request_charaname_list]
+        replenish_charaname_list = [request_charaname_list[i] for i in range(len(request_charaname_list)) if request_charaid_list[i] not in recorded_charaid_list]
+        if len(replenish_charaname_list) != 0:
+            collection_replenish_dict[int(uid_str)] = ', '.join(replenish_charaname_list)
+    return collection_replenish_dict
 
 
 @sv.on_prefix(('一键box统计', '一键统计box'))
@@ -265,6 +300,10 @@ async def box_collect(bot, ev: CQEvent):
         if not priv.check_priv(ev, priv.ADMIN):
             await bot.send(ev, '抱歉，您非管理员，无此指令使用权限')
             return
+        s = ev.message.extract_plain_text()
+        if len(s)!=0 and s!='补录':
+            await bot.send(ev, '指令参数错误，请重试')
+            return
         db1 = ColleSettingDao()
         r = db1._find_by_id(ev.group_id)
         if r == None:
@@ -272,17 +311,38 @@ async def box_collect(bot, ev: CQEvent):
             return
         db_name, broadcast_list_str, detail, collection_setting = r[0], r[1], r[2], r[3]
         broadcast_list = broadcast_list_str.split(',')
-        user_card = await get_user_card(bot, ev.group_id, int(broadcast_list[0]))
-        msg_part = '' if len(broadcast_list)==1 else f'等{len(broadcast_list)}人'
-        msg = f'''
+        if len(s)==0:
+            user_card = await get_user_card(bot, ev.group_id, int(broadcast_list[0]))
+            msg_part = '' if len(broadcast_list)==1 else f'等{len(broadcast_list)}人'
+            msg = f'''
 准备向{user_card}{msg_part}私聊统计box，当前参数如下:\n
 存放统计结果的数据库: {db_name}\n
 此次统计的相关说明: {detail}\n
-需要统计的人物名: {collection_setting}\n\n
-确认无误后请输入"确认发送"完成广播，如需修改参数，请使用"设定box统计"指令
+需要统计的角色名: {collection_setting}\n\n
+确认无误后请输入"确认发送"完成广播，如需修改参数，请使用"设置box统计"指令
 '''.strip()
-        command_confirmer.record_command_time()
-        await bot.send(ev, msg)
+            command_confirmer.record_command(COMMAND_NAMES[0])
+            await bot.send(ev, msg)
+        else:
+            collection_replenish_dict =  get_collection_replenish_dict(broadcast_list, db_name, collection_setting)
+            if len(collection_replenish_dict.keys()) == 0:
+                msg = f'''
+未检测到需要补录的用户。\n当前设定中需要统计的角色名为:\n
+{collection_setting}
+'''.strip()
+                await bot.send(ev, msg)
+                return
+            else:
+                user_card = await get_user_card(bot, ev.group_id, list(collection_replenish_dict.keys())[0])
+                msg_part = '' if len(broadcast_list)==1 else f'等{len(collection_replenish_dict.keys())}人'
+                msg = f'''
+准备向{user_card}{msg_part}私聊补录box，当前参数如下:\n
+存放统计结果的数据库: {db_name}\n
+此次统计的相关说明: {detail}\n
+确认无误后请输入"确认发送"完成广播，如需修改参数，请使用"设置box统计"指令
+'''.strip()
+                command_confirmer.record_command(COMMAND_NAMES[1])
+                await bot.send(ev, msg)
     except:
         await bot.send(ev, '一键统计失败，请重试')
         
@@ -330,7 +390,7 @@ async def get_collection_db_list(bot, ev: CQEvent):
     await bot.send(ev, f'此群共有以下{len(sorted_db_list)}个box数据库(第一行为当前数据库):\n' + '\n'.join(sorted_db_list))
 
 
-@sv.on_prefix('查看已统计角色')
+@sv.on_prefix(('查看已统计角色', '查看已统计人物'))
 async def get_collection_db_list(bot, ev: CQEvent):
     s = ev.message.extract_plain_text()
     if len(s)==0:
@@ -453,7 +513,7 @@ def get_max_char_amount(s, draw, fnt, max_length):
     return max_amount
 
     
-@sv.on_prefix('发送box统计图')
+@sv.on_prefix(('发送box统计图', '查看box统计图', '发送box统计表', '查看box统计表'))
 async def send_box_colle_pic(bot, ev: CQEvent):
     try:
         s = ev.message.extract_plain_text()
