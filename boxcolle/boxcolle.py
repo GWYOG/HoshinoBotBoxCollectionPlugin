@@ -9,6 +9,7 @@ from .dao.boxcollesqlitedao import BoxColleDao
 
 import datetime, random, os, csv
 from PIL import Image, ImageDraw, ImageFont
+from time import sleep
 
 sv = Service('boxcolle', bundle='pcrbox统计', help_='''
 一键box统计 | 在配置完box统计参数后使用此指令，机器人会自动私聊公会成员统计其box
@@ -58,6 +59,7 @@ class CommandConfirmer:
 
 
 MAX_VALID_TIME = 30
+SEND_INTERVAL = 0.5
 command_confirmer = CommandConfirmer(MAX_VALID_TIME)
 broadcast_list= []
 broadcast_msg = ''
@@ -244,10 +246,12 @@ async def confirm_broadcast(bot, ev: CQEvent):
         broadcast_list = broadcast_list_str.split(',')
         user_card = await get_user_card(bot, ev.group_id, ev.user_id)
         db2 = ColleRequestDao()
+        command_confirmer.reset()
+        await bot.send(ev, f'即将开始广播，此过程大概需要{int(len(broadcast_list)*SEND_INTERVAL)+1}s完成，请耐心等待')
         for uid in broadcast_list:
             db2._update_or_insert_by_id(int(uid), ev.group_id, db_name, detail, collection_setting)
             await bot.send_private_msg(user_id=int(uid), message=f'您好~群{ev.group_id}的管理员{user_card}({ev.user_id})正在统计公会成员的box，请输入"录入box"并根据指示向机器人录入您的box~')
-        command_confirmer.reset()
+            sleep(SEND_INTERVAL)
         await bot.send(ev, f'广播成功!已向{len(broadcast_list)}人私聊发送box统计请求')
     elif command_confirmer.has_command_wait_to_confirm():
         await bot.send(ev, f'确认超时，请在{MAX_VALID_TIME}s内完成确认')
