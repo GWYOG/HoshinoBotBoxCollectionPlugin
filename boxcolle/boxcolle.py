@@ -154,7 +154,7 @@ async def get_user_card_dict(bot, group_id):
     mlist = await bot.get_group_member_list(group_id=group_id)
     d = {}
     for m in mlist:
-        d[m['user_id']] = m['card']
+        d[m['user_id']] = m['card'] if m['card']!='' else m['nickname']
     return d
 
 
@@ -162,7 +162,7 @@ async def get_user_card(bot, group_id, user_id):
     mlist = await bot.get_group_member_list(group_id=group_id)
     for m in mlist:
         if m['user_id'] == user_id:
-            return m['card']
+            return m['card'] if m['card']!='' else m['nickname']
     return str(user_id)
 
 
