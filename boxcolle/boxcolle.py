@@ -7,12 +7,11 @@ from .dao.collesettingsqlitedao import ColleSettingDao
 from .dao.collerequestsqlitedao import ColleRequestDao
 from .dao.boxcollesqlitedao import BoxColleDao
 
-import datetime, random, os, csv
+import datetime, random, os, csv, asyncio, math
 from PIL import Image, ImageDraw, ImageFont
-from time import sleep
 
 sv = Service('boxcolle', bundle='pcrbox统计', help_='''
-一键box统计 [补录] | 在配置完box统计参数后使用此指令，机器人会自动私聊公会成员统计其box。如果填写参数"补录"，则会开启补录模式，只让成员填写他们还没录入的角色星级。
+一键box统计 [补录] | 在配置完box统计参数后使用此指令，机器人会自动私聊公会成员统计其box。如果填写参数"补录"，则会开启补录模式，只让成员填写他们还没录入的角色星级
 ----------
 设置box统计 <数据库名> <统计对象> <备注> <统计的角色名(逗号分隔)> | 统计对象参数目前支持填写"all"(全部成员) 或"allE@xxx@yyy"(全部成员除去xxx和yyy) 或"@xxx@yyy"(xxx和yyy)
 ----------
@@ -40,23 +39,27 @@ sv = Service('boxcolle', bundle='pcrbox统计', help_='''
 
 class CommandConfirmer:    
     def __init__(self, max_valid_time):
-        self.last_command_time = datetime.datetime(2020, 4, 17, 0, 0, 0, 0)
+        self.last_command_time = {}
+        self.last_command_name = {}
         self.max_valid_time = max_valid_time
 
-    def check(self):
+    def get_last_command_time(self, gid):
+        return self.last_command_time[gid] if self.last_command_time.get(gid) is not None else datetime.datetime(2020, 4, 17, 0, 0, 0, 0)
+
+    def check(self, gid):
         now_time = datetime.datetime.now()
-        delta_time = now_time - self.last_command_time
+        delta_time = now_time - self.get_last_command_time(gid)
         return delta_time.seconds <= self.max_valid_time
     
-    def record_command(self, command_name):
-        self.last_command_name = command_name
-        self.last_command_time = datetime.datetime.now()
+    def record_command(self, gid, command_name):
+        self.last_command_name[gid] = command_name
+        self.last_command_time[gid] = datetime.datetime.now()
         
-    def has_command_wait_to_confirm(self):
-        return self.last_command_time != datetime.datetime(2020, 4, 17, 0, 0, 0, 0)
+    def has_command_wait_to_confirm(self, gid):
+        return self.get_last_command_time(gid) != datetime.datetime(2020, 4, 17, 0, 0, 0, 0)
         
-    def reset(self):
-        self.last_command_time = datetime.datetime(2020, 4, 17, 0, 0, 0, 0)
+    def reset(self, gid):
+        self.last_command_time[gid] = datetime.datetime(2020, 4, 17, 0, 0, 0, 0)
 
 
 MAX_VALID_TIME = 30
@@ -66,79 +69,45 @@ command_confirmer = CommandConfirmer(MAX_VALID_TIME)
 broadcast_list= []
 broadcast_msg = ''
 
-VALID_STAR = ['0', '1', '2', '3', '4', '5', '6']
+
+def input_chara2input_format(input_chara_str):
+    input_format_list = []
+    input_chara_list = input_chara_str.split(', ')
+    for name in input_chara_list:
+        if name.endswith('R'):
+            name = name[0:-1]
+            format_suffix = '.R'
+        else:
+            format_suffix = ''
+        input_format_list.append(name+'.x'+format_suffix)
+    return ', '.join(input_format_list)
 
 
-@on_command('测试用随机录入')
-async def random_box_input(session):
-    db = ColleRequestDao()
-    r = db._find_by_id(session.event.user_id)
-    if r==None:
-        await session.send('您暂时还没收到公会的box统计请求')
-        return
-    s = r[2]
-    sList = s.split(',')
-    box = []
-    for item in sList:
-        name = item.strip()
-        if not is_valid_name(name):
-            await session.send(f'录入box失败，请按正确的格式填写')
-            return
-        box.append(name)
-    db = BoxColleDao()
-    for i in range(10):
-        uid = int(random.random()*10000000000)
-        for chara_name in box:
-            db._update_or_insert(uid, r[0], chara_name2chara_id(chara_name), chara_name, '4' if random.random()>0.5 else '5')
-    await session.send(f'随机测试box录入完毕!') 
-
-
-@on_command('录入box')
-async def box_input(session):
-    db = ColleRequestDao()
-    r = db._find_by_id(session.event.user_id)
-    if r==None:
-        await session.send('您暂时还没收到公会的box统计请求')
-        return
-    
-    s = session.current_arg
-    if s=='':
-        msg = f'''
-请按格式输入以下角色的星级(可单次或分多次输入):\n
-{r[2]}
------------------------------------
-备注:\n
-{r[1]}
------------------------------------
-输入格式:\n
-在需要输入的人物名后面直接填写星级数。\n比如想录入"狼,狗"的星级，\n则输入"录入box 狼4,狗5"\n如果没有这个角色，则填0
------------------------------------
-下方文本供复制修改使用:
-'''.strip()
-        await session.send(msg)
-        await session.send(f'录入box {r[2]}')
+def is_valid_star_rank(star_rank):
+    need_rank = 'x.R' in star_rank
+    splitter = 'x.R' if need_rank else 'x'
+    sr = star_rank.split(splitter)
+    star = sr[0]
+    rank = sr[1]
+    if star == '0':
+        return True
+    elif need_rank and star.isdigit() and rank.isdigit():
+        return True
+    elif not need_rank and star.isdigit():
+        return True
     else:
-        sList = s.split(',')
-        box = {}
-        for item in sList:
-            item = item.strip()
-            name = item[0:-1]
-            star = item[-1]
-            if not is_valid_name(name) or star not in VALID_STAR:
-                await session.send(f'录入box失败，请按正确的格式填写')
-                return
-            box[name] = star
-        db = BoxColleDao()
-        for key in box.keys():
-            db._update_or_insert(session.event.user_id, r[0], chara_name2chara_id(str(key)), str(key), box[key])
-        await session.send(f'box录入完毕!')
-        user_card = await get_user_card(session.bot, r[3], session.event.user_id)
-        await session.bot.send_group_msg(group_id=r[3], message=f'{user_card}完成了box录入')
+        return False
 
 
 def normalize_str(s):
     sList = s.replace('，',',').split(',')
-    return ', '.join([s.strip() for s in sList])
+    sList_normlized = []
+    for s in sList:
+        s.strip()
+        if s.endswith('r'):
+            s = s[0:-1] + 'R'
+        sList_normlized.append(s)
+    return ', '.join(sList_normlized)
 
 
 def chara_name2chara_id(name):
@@ -152,8 +121,12 @@ def is_valid_name(name):
 def is_valid_input(s):
     sList = s.split(',')
     for name in sList:
+        name_suffix = ''
+        if name.endswith('R'):
+            name = name[0:-1]
+            name_suffix = name[-1]
         if not is_valid_name(name):
-            return name, False
+            return name+name_suffix, False
     return '', True
 
 
@@ -219,6 +192,81 @@ def parse_message(msg):
     return s
 
 
+def get_collection_replenish_dict(broadcast_list, db_name, collection_setting):
+    collection_replenish_dict = {}
+    for uid_str in broadcast_list:
+        db2 = BoxColleDao()
+        recorded_charaid_dict = db2._find_chara_id_by_user_id(int(uid_str), db_name)
+        request_charaname_list = collection_setting.split(', ')
+        replenish_charaname_list = []
+        for charaname in request_charaname_list:
+            need_rank = charaname.endswith('R')
+            name = charaname[0:-1] if need_rank else charaname
+            charaid = chara_name2chara_id(name)
+            star_rank = recorded_charaid_dict.get(charaid)
+            if (star_rank is None) or (star_rank is not None and need_rank and 'R' not in star_rank):
+                replenish_charaname_list.append(charaname)
+        if len(replenish_charaname_list) != 0:
+            collection_replenish_dict[int(uid_str)] = ', '.join(replenish_charaname_list)
+    return collection_replenish_dict
+
+
+def get_max_char_amount(s, draw, fnt, max_length):
+    max_amount = 0
+    for i in range(len(s)):
+        width, height = draw.textsize(s[0:(i+1)], font = fnt)
+        if width > max_length:
+            return max_amount
+        else:
+            max_amount += 1
+    return max_amount
+
+
+@on_command('录入box')
+async def box_input(session):
+    db = ColleRequestDao()
+    r = db._find_by_id(session.event.user_id)
+    if r==None:
+        await session.send('您暂时还没收到公会的box统计请求')
+        return
+    
+    s = session.current_arg
+    if s=='':
+        msg1 = f'''
+请按格式输入以下角色的星级,角色名字后面带有"R"表示还需录入Rank(单次可录入任意多个角色):\n
+{r[2]}
+-----------------------------------
+备注:\n
+{r[1]}
+'''.strip()
+        msg2 = f'''
+输入格式:\n
+在需要输入的角色名后面填写星级和Rank(如果需要),以英文句号分隔。\n比如需要录入的角色是"狼,狗R"(表示需要录入狼的星级、狗的星级和Rank), 则输入"录入box 狼.4x,狗.5x.R9", 表示自己是4星狼和5星Rank9的狗。\n如果没有某个角色，则填0x。
+-----------------------------------
+下方文本供复制修改使用，请在合适的位置填上正确的数字后发送:
+'''.strip()
+        await session.send(msg1)
+        await session.send(msg2)
+        await session.send(f'录入box {input_chara2input_format(r[2])}')
+    else:
+        sList = s.split(',')
+        box = {}
+        for item in sList:
+            item = item.strip()
+            name = item.split('.', 1)[0]
+            star_rank = item.split('.', 1)[1]
+            if not is_valid_name(name) or not is_valid_star_rank(star_rank):
+                await session.send(f'录入box失败, "{item}"无法识别, 请按正确的格式填写')
+                return
+            box[name] = star_rank
+        db = BoxColleDao()
+        for key in box.keys():
+            db._update_or_insert(session.event.user_id, r[0], chara_name2chara_id(str(key)), str(key), box[key])
+        await session.send(f'box录入完毕!')
+        user_card = await get_user_card(session.bot, r[3], session.event.user_id)
+        await session.bot.send_group_msg(group_id=r[3], message=f'{user_card}完成了box录入')
+
+
 @sv.on_prefix(('设置box统计', '设定box统计'))
 async def set_box_collection(bot, ev: CQEvent):
     if not priv.check_priv(ev, priv.ADMIN):
@@ -236,7 +284,7 @@ async def set_box_collection(bot, ev: CQEvent):
         await bot.finish(ev, f'检测到输入参数中存在未知人物名"{unknown_name}"，请重新输入')
     db = ColleSettingDao()
     db._update_or_insert_by_id(ev.group_id, s[0], broadcast_list_str, s[2], chara_name_str)
-    command_confirmer.reset()
+    command_confirmer.reset(ev.group_id)
     await bot.send(ev, '设定box统计项目完毕!')  
 
     
@@ -244,54 +292,41 @@ async def set_box_collection(bot, ev: CQEvent):
 async def confirm_broadcast(bot, ev: CQEvent):
     if not priv.check_priv(ev, priv.ADMIN):
         await bot.finish(ev, '抱歉，您非管理员，无此指令使用权限')
-    if command_confirmer.check():
+    if command_confirmer.check(ev.group_id):
         db1 = ColleSettingDao()
         r = db1._find_by_id(ev.group_id)
         db_name, broadcast_list_str, detail, collection_setting = r[0], r[1], r[2], r[3]
         broadcast_list = broadcast_list_str.split(',')
-        if command_confirmer.last_command_name == COMMAND_NAMES[0]:
+        if command_confirmer.last_command_name[ev.group_id] == COMMAND_NAMES[0]:
             user_card = await get_user_card(bot, ev.group_id, ev.user_id)
             db2 = ColleRequestDao()
-            command_confirmer.reset()
+            command_confirmer.reset(ev.group_id)
             await bot.send(ev, f'即将开始广播，此过程大约需要{int(len(broadcast_list)*SEND_INTERVAL)+1}s完成，请耐心等待')
             for uid in broadcast_list:
                 db2._update_or_insert_by_id(int(uid), ev.group_id, db_name, detail, collection_setting)
                 await bot.send_private_msg(user_id=int(uid), message=f'您好~群{ev.group_id}的管理员{user_card}({ev.user_id})正在统计公会成员的box，请输入"录入box"并根据指示向机器人录入您的box~')
-                sleep(SEND_INTERVAL)
+                await asyncio.sleep(SEND_INTERVAL)
             await bot.send(ev, f'广播成功!已向{len(broadcast_list)}人私聊发送box统计请求')
-        elif command_confirmer.last_command_name == COMMAND_NAMES[1]:
+        elif command_confirmer.last_command_name[ev.group_id] == COMMAND_NAMES[1]:
             collection_replenish_dict =  get_collection_replenish_dict(broadcast_list, db_name, collection_setting)
             user_card = await get_user_card(bot, ev.group_id, ev.user_id)
             db2 = ColleRequestDao()
-            command_confirmer.reset()
+            command_confirmer.reset(ev.group_id)
             await bot.send(ev, f'即将开始广播，此过程大约需要{int(len(collection_replenish_dict.keys())*SEND_INTERVAL)+1}s完成，请耐心等待')
             for uid in collection_replenish_dict.keys():
                 db2._update_or_insert_by_id(uid, ev.group_id, db_name, detail, collection_replenish_dict[uid])
                 msg = f'''
-您好~群{ev.group_id}的管理员{user_card}({ev.user_id})正在补录上次统计中漏统计的角色星级，您还需要补充录入的的角色为:\n
+您好~群{ev.group_id}的管理员{user_card}({ev.user_id})正在补录上次统计中漏统计的角色星级和Rank，您还需要补充录入的的角色为:\n
 {collection_replenish_dict[uid]}\n
 请输入"录入box"查看填写格式的相关说明
 '''.strip()
                 await bot.send_private_msg(user_id=uid, message=msg)
-                sleep(SEND_INTERVAL)
+                await asyncio.sleep(SEND_INTERVAL)
             await bot.send(ev, f'广播成功!已向{len(collection_replenish_dict.keys())}人私聊发送box补录请求')            
-    elif command_confirmer.has_command_wait_to_confirm():
+    elif command_confirmer.has_command_wait_to_confirm(ev.group_id):
         await bot.send(ev, f'确认超时，请在{MAX_VALID_TIME}s内完成确认')
     else:
         await bot.send(ev, '未找到需要确认的指令')
-
-
-def get_collection_replenish_dict(broadcast_list, db_name, collection_setting):
-    collection_replenish_dict = {}
-    for uid_str in broadcast_list:
-        db2 = BoxColleDao()
-        recorded_charaid_list = db2._find_chara_id_by_user_id(int(uid_str), db_name)
-        request_charaname_list = collection_setting.split(', ')
-        request_charaid_list = [chara_name2chara_id(name) for name in request_charaname_list]
-        replenish_charaname_list = [request_charaname_list[i] for i in range(len(request_charaname_list)) if request_charaid_list[i] not in recorded_charaid_list]
-        if len(replenish_charaname_list) != 0:
-            collection_replenish_dict[int(uid_str)] = ', '.join(replenish_charaname_list)
-    return collection_replenish_dict
 
 
 @sv.on_prefix(('一键box统计', '一键统计box'))
@@ -321,7 +356,7 @@ async def box_collect(bot, ev: CQEvent):
 需要统计的角色名: {collection_setting}\n\n
 确认无误后请输入"确认发送"完成广播，如需修改参数，请使用"设置box统计"指令
 '''.strip()
-            command_confirmer.record_command(COMMAND_NAMES[0])
+            command_confirmer.record_command(ev.group_id, COMMAND_NAMES[0])
             await bot.send(ev, msg)
         else:
             collection_replenish_dict =  get_collection_replenish_dict(broadcast_list, db_name, collection_setting)
@@ -341,7 +376,7 @@ async def box_collect(bot, ev: CQEvent):
 此次统计的相关说明: {detail}\n
 确认无误后请输入"确认发送"完成广播，如需修改参数，请使用"设置box统计"指令
 '''.strip()
-                command_confirmer.record_command(COMMAND_NAMES[1])
+                command_confirmer.record_command(ev.group_id, COMMAND_NAMES[1])
                 await bot.send(ev, msg)
     except:
         await bot.send(ev, '一键统计失败，请重试')
@@ -401,7 +436,7 @@ async def get_collection_db_list(bot, ev: CQEvent):
         db_name = s
     db = BoxColleDao()
     recorded_charaname_list = db._get_recorded_charaname_list(db_name)
-    msg = f'{db_name}数据库已统计下列{len(recorded_charaname_list)}名角色的星级:\n' + ', '.join(recorded_charaname_list)
+    msg = f'{db_name}数据库已统计下列{len(recorded_charaname_list)}名角色的星级Rank:\n' + ', '.join(recorded_charaname_list)
     await bot.send(ev, msg)
 
 
@@ -431,30 +466,31 @@ async def get_collection_result(bot, ev: CQEvent):
                 user_card = await get_user_card(bot, ev.group_id, uid)
                 db = BoxColleDao()
                 charname_list = db._get_recorded_charaname_list(s_complemented[0])
-                star_list = [db._find_by_primary_key(uid, s_complemented[0], chara_name2chara_id(i)) for i in charname_list]
-                box_str = ','.join([f' {charname_list[i]}{star_list[i]}x'for i in range(len(charname_list)) if star_list[i]!='']).lstrip()
+                star_list = [db._find_by_primary_key(uid, s_complemented[0], chara_name2chara_id(i)).replace('.', '') for i in charname_list]
+                box_str = ','.join([f'{charname_list[i]}{star_list[i]}' for i in range(len(charname_list)) if star_list[i]!='']).lstrip()
                 msg = f'{s_complemented[0]}数据库中{user_card}录入的box是:\n' + box_str
                 await bot.send(ev, msg)
             elif is_valid_name(s_complemented[1]):
                 chara_id = chara_name2chara_id(s_complemented[1])
                 db = BoxColleDao()
                 uid_dict = db._find_by_chara_id(chara_id, s_complemented[0])
-                star_list = sorted(set(uid_dict.values()), reverse = True)
+                star_rank_list = sorted(set(uid_dict.values()), reverse = True)
                 msg_part = ''
                 user_card_dict = await get_user_card_dict(bot, ev.group_id)
-                for star in star_list:
-                    card_list = [uid2card(uid, user_card_dict) for uid in uid_dict.keys() if uid_dict[uid]==star]
-                    msg_part += f'{star}x: (共{len(card_list)}人)\n'
+                for star_rank in star_rank_list:
+                    card_list = [uid2card(uid, user_card_dict) for uid in uid_dict.keys() if uid_dict[uid]==star_rank]
+                    star_rank = star_rank.replace('.', '')
+                    msg_part += f'{star_rank}: (共{len(card_list)}人)\n'
                     msg_part += ', '.join(card_list) + '\n'
-                msg = f'{s_complemented[0]}数据库中录入的{s_complemented[1]}的星级情况为:\n' + msg_part.strip()
+                msg = f'{s_complemented[0]}数据库中录入的{s_complemented[1]}的星级Rank情况为:\n' + msg_part.strip()
                 await bot.send(ev, msg)    
         elif len(s_complemented) == 3:
             uid = int(s_complemented[1][1:])
             chara_id = chara_name2chara_id(s_complemented[2])
             db = BoxColleDao()
-            star = db._find_by_primary_key(uid, s_complemented[0], chara_id)
+            star_rank = db._find_by_primary_key(uid, s_complemented[0], chara_id).replace('.', '')
             user_card = await get_user_card(bot, ev.group_id, uid)
-            msg = f'{s_complemented[0]}数据库中{user_card}{s_complemented[2]}的星级为: {star}x'
+            msg = f'{s_complemented[0]}数据库中{user_card}{s_complemented[2]}的星级Rank为: {star_rank}'
             await bot.send(ev, msg)    
     except:
         await bot.send(ev, '参数格式错误，请重试')
@@ -487,30 +523,19 @@ async def write_box_colle_to_csv(bot, ev: CQEvent):
             for uid in uid_list:
                 row = [uid2card(uid, user_card_dict)]
                 for chara_name in charaname_list:
-                    star = db._find_by_primary_key(uid, db_name, chara_name2chara_id(chara_name))
-                    if star == '':
-                        star_str = star
-                    elif star == '0':
-                        star_str = '-'
+                    star_rank = db._find_by_primary_key(uid, db_name, chara_name2chara_id(chara_name))
+                    if star_rank == '':
+                        star_rank_str = star_rank
+                    elif star_rank.startswith('0x'):
+                        star_rank_str = '-'
                     else:
-                        star_str = f'{star}x'
-                    row.append(star_str)
+                        star_rank_str = star_rank.replace('.', '')
+                    row.append(star_rank_str)
                 writer.writerow(row)
             f.close()
         await bot.send(ev, f'{db_name}数据库的box统计表已导出到\n{file_path}')
     except:
         await bot.send(ev, f'导出失败')
-
-
-def get_max_char_amount(s, draw, fnt, max_length):
-    max_amount = 0
-    for i in range(len(s)):
-        width, height = draw.textsize(s[0:(i+1)], font = fnt)
-        if width > max_length:
-            return max_amount
-        else:
-            max_amount += 1
-    return max_amount
 
     
 @sv.on_prefix(('发送box统计图', '查看box统计图', '发送box统计表', '查看box统计表'))
@@ -528,36 +553,37 @@ async def send_box_colle_pic(bot, ev: CQEvent):
         charaname_list = db._get_recorded_charaname_list(db_name)
         uid_list = db._get_recorded_uid_list(db_name)
         user_card_dict = await get_user_card_dict(bot, ev.group_id)
-    
-        im = Image.open(os.path.normcase('hoshino/modules/boxcolle/pic/table_base.png'))
-        draw = ImageDraw.Draw(im)
-        fnt = ImageFont.truetype("simsun.ttc", 16, encoding="unic")
-        if len(charaname_list) > 31:
-            await bot.send(ev, '抱歉，由于统计的角色过多，图片无法生成，请期待后续版本的优化')
-            return
+
         if len(uid_list) > 30:
             await bot.send(ev, '统计人数超过30人，图片生成失败')
-            return
-        for i in range(len(charaname_list)):
-            width, height = draw.textsize(charaname_list[i], font = fnt)
-            draw.text((153+i*46-width/2,30), charaname_list[i], fill=(0, 0 ,0), font=fnt)
-        for i in range(len(uid_list)):
-            card = uid2card(uid_list[i], user_card_dict)
-            card_trunc = card[0:get_max_char_amount(card, draw, fnt, 80)]
-            draw.text((43, 54+i*23), card_trunc, fill=(0, 0 ,0), font=fnt)
-        for i in range(len(uid_list)):
-            for j in range(len(charaname_list)):
-                star = db._find_by_primary_key(uid_list[i], db_name, chara_name2chara_id(charaname_list[j]))
-                if star == '':
-                    star_str = star
-                elif star == '0':
-                    star_str = '-'
-                else:
-                    star_str = f'{star}x'    
-                draw.text((148+j*46, 54+i*23), star_str, fill=(0, 0 ,0), font=fnt)
-        pic_path = os.path.normcase(f'hoshino/modules/boxcolle/pic/box_{ev.group_id}.png')
-        im.save(pic_path)
-        pic = MessageSegment.image(f'file:///{os.path.abspath(pic_path)}')   
-        await bot.send(ev, pic)
+            return      
+        pic_amount = math.ceil(len(charaname_list)/31)    
+        for p in range(pic_amount):
+            im = Image.open(os.path.normcase('hoshino/modules/boxcolle/pic/table_base.png'))
+            draw = ImageDraw.Draw(im)
+            fnt = ImageFont.truetype("simsun.ttc", 16, encoding="unic")
+            column_amount = (len(charaname_list)-1)%31+1 if p==pic_amount-1 else 31 
+            for i in range(column_amount):
+                width, height = draw.textsize(charaname_list[p*31+i], font = fnt)
+                draw.text((153+i*46-width/2,30), charaname_list[p*31+i], fill=(0, 0 ,0), font=fnt)        
+            for i in range(len(uid_list)):
+                card = uid2card(uid_list[i], user_card_dict)
+                card_trunc = card[0:get_max_char_amount(card, draw, fnt, 80)]
+                draw.text((43, 54+i*23), card_trunc, fill=(0, 0 ,0), font=fnt)
+            for i in range(len(uid_list)):
+                for j in range(column_amount):
+                    star_rank = db._find_by_primary_key(uid_list[i], db_name, chara_name2chara_id(charaname_list[p*31+j]))
+                    if star_rank == '':
+                        star_rank_str = star_rank
+                    elif star_rank.startswith('0x'):
+                        star_rank_str = '-'
+                    else:
+                        star_rank_str = star_rank.replace('.', '')
+                    width, height = draw.textsize(star_rank_str, font = fnt)
+                    draw.text((153+j*46-width/2, 54+i*23), star_rank_str, fill=(0, 0 ,0), font=fnt)
+            pic_path = os.path.normcase(f'hoshino/modules/boxcolle/pic/box_{ev.group_id}_{p}.png')
+            im.save(pic_path)
+            pic = MessageSegment.image(f'file:///{os.path.abspath(pic_path)}')   
+            await bot.send(ev, pic)
     except:
         await bot.send(ev, '发送失败，请检查机器人是否能发图或服务器是否未安装"simsun.ttc"字体')
