@@ -285,7 +285,7 @@ async def set_box_collection(bot, ev: CQEvent):
     db = ColleSettingDao()
     db._update_or_insert_by_id(ev.group_id, s[0], broadcast_list_str, s[2], chara_name_str)
     command_confirmer.reset(ev.group_id)
-    await bot.send(ev, '设定box统计项目完毕!')  
+    await bot.send(ev, '设定box统计项目完毕!')
 
     
 @sv.on_prefix('确认发送')
@@ -302,17 +302,24 @@ async def confirm_broadcast(bot, ev: CQEvent):
             db2 = ColleRequestDao()
             command_confirmer.reset(ev.group_id)
             await bot.send(ev, f'即将开始广播，此过程大约需要{int(len(broadcast_list)*SEND_INTERVAL)+1}s完成，请耐心等待')
+            count = 0
             for uid in broadcast_list:
                 db2._update_or_insert_by_id(int(uid), ev.group_id, db_name, detail, collection_setting)
-                await bot.send_private_msg(user_id=int(uid), message=f'您好~群{ev.group_id}的管理员{user_card}({ev.user_id})正在统计公会成员的box，请输入"录入box"并根据指示向机器人录入您的box~')
+                try:
+                    await bot.send_private_msg(user_id=int(uid), message=f'您好~群{ev.group_id}的管理员{user_card}({ev.user_id})正在统计公会成员的box，请输入"录入box"并根据指示向机器人录入您的box~')
+                    count += 1
+                except:
+                    card = await get_user_card(bot, ev.group_id, int(uid))
+                    await bot.send(ev, f'无法向{card}发送私聊，请提醒TA检查自己的QQ是否已启用"接收来自群的临时会话"功能，或者添加机器人为好友')
                 await asyncio.sleep(SEND_INTERVAL)
-            await bot.send(ev, f'广播成功!已向{len(broadcast_list)}人私聊发送box统计请求')
+            await bot.send(ev, f'广播完毕!已成功向{count}人私聊发送box统计请求')
         elif command_confirmer.last_command_name[ev.group_id] == COMMAND_NAMES[1]:
             collection_replenish_dict =  get_collection_replenish_dict(broadcast_list, db_name, collection_setting)
             user_card = await get_user_card(bot, ev.group_id, ev.user_id)
             db2 = ColleRequestDao()
             command_confirmer.reset(ev.group_id)
             await bot.send(ev, f'即将开始广播，此过程大约需要{int(len(collection_replenish_dict.keys())*SEND_INTERVAL)+1}s完成，请耐心等待')
+            count = 0
             for uid in collection_replenish_dict.keys():
                 db2._update_or_insert_by_id(uid, ev.group_id, db_name, detail, collection_replenish_dict[uid])
                 msg = f'''
@@ -320,9 +327,14 @@ async def confirm_broadcast(bot, ev: CQEvent):
 {collection_replenish_dict[uid]}\n
 请输入"录入box"查看填写格式的相关说明
 '''.strip()
-                await bot.send_private_msg(user_id=uid, message=msg)
+                try:
+                    await bot.send_private_msg(user_id=uid, message=msg)
+                    count += 1
+                except:
+                    card = await get_user_card(bot, ev.group_id, int(uid))
+                    await bot.send(ev, f'无法向{card}发送私聊，请提醒TA检查自己的QQ是否已启用"接收来自群的临时会话"功能，或者添加机器人为好友')
                 await asyncio.sleep(SEND_INTERVAL)
-            await bot.send(ev, f'广播成功!已向{len(collection_replenish_dict.keys())}人私聊发送box补录请求')            
+            await bot.send(ev, f'广播完毕!已成功向{count}人私聊发送box统计请求')        
     elif command_confirmer.has_command_wait_to_confirm(ev.group_id):
         await bot.send(ev, f'确认超时，请在{MAX_VALID_TIME}s内完成确认')
     else:
