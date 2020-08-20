@@ -123,8 +123,8 @@ def is_valid_input(s):
     for name in sList:
         name_suffix = ''
         if name.endswith('R'):
-            name = name[0:-1]
             name_suffix = name[-1]
+            name = name[0:-1]
         if not is_valid_name(name):
             return name+name_suffix, False
     return '', True
