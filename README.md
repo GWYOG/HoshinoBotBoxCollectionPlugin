@@ -5,7 +5,7 @@ A [HoshinoBot](https://github.com/Ice-Cirno/HoshinoBot) based [PCR](http://prico
 
 ## 简介
 
-基于 [HoshinoBot](https://github.com/Ice-Cirno/HoshinoBot) 开发的box统计插件，群管理可在QQ群中设置机器人统计box的相关参数，之后机器人会自动私聊公会成员统计他们的box。现支持统计角色的星级和Rank。
+基于 [HoshinoBot](https://github.com/Ice-Cirno/HoshinoBot) 开发的box统计插件，群管理可在QQ群中设置机器人统计box的相关参数，之后机器人会自动私聊公会成员统计他们的box。
 
 统计完的box可以在群内通过指令查看，也可以自动生成excel文档到服务器后台。
 
